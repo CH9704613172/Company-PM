@@ -2,23 +2,14 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
+# ------------------ PAGE CONFIG ------------------
 st.set_page_config(
     page_title="PE Fund Dashboard",
     page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    layout="wide"
 )
 
-st.markdown("""
-<style>
-  [data-testid='stMetric'] { background:#f8f9fa; border-radius:10px; padding:14px 18px; }
-  [data-testid='stMetricLabel'] { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#666; }
-  [data-testid='stMetricValue'] { font-size:28px; font-weight:700; }
-  .block-container { padding-top:1.5rem; }
-</style>
-""", unsafe_allow_html=True)
-
-# ------------------ CUSTOM XIRR (NO SCIPY) ------------------
+# ------------------ CUSTOM XIRR ------------------
 def xirr(cashflows, guess=0.1):
     cashflows = sorted(cashflows, key=lambda x: x[0])
     t0 = cashflows[0][0]
@@ -40,15 +31,16 @@ def xirr(cashflows, guess=0.1):
 
 
 # ------------------ PRICE DATA ------------------
-# (Same as your data — shortened here for clarity, keep full data)
 TSLA_PRICES = {
-    "2019-01-31":59.51,"2019-02-28":62.07,"2019-03-29":65.95,
+    "2019-01-31":59.51,"2019-06-30":211.48,"2020-12-31":705.67,
+    "2021-12-31":1056.78,"2022-12-30":123.18,"2023-12-29":248.48,
     "2024-12-31":403.84,
 }
 
 NVDA_PRICES = {
-    "2019-01-31":35.16,"2019-02-28":42.78,"2019-03-29":45.94,
-    "2024-12-31":134.25,
+    "2019-01-31":35.16,"2020-06-30":92.80,"2021-12-31":294.11,
+    "2022-12-30":146.11,"2023-12-29":495.22,"2024-06-28":1208.88,
+    "2024-12-31":134.25,  # split distortion
 }
 
 def build_price_df(prices_dict):
@@ -57,6 +49,7 @@ def build_price_df(prices_dict):
     return df.set_index("date").sort_index()
 
 
+# ------------------ SIMULATION ------------------
 @st.cache_data
 def simulate_fund(prices_dict, num_investments, committed_m, seed):
     price_df = build_price_df(prices_dict)
@@ -66,9 +59,16 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
     dates = price_df.index.tolist()
     n = len(dates)
 
-    call_idxs = sorted(rng.choice(range(n // 2), size=num_investments, replace=False))
+    # ✅ SAFE SAMPLING FIX
+    max_possible = max(1, n // 2)
+    num_inv_safe = min(num_investments, max_possible)
+
+    call_idxs = sorted(
+        rng.choice(range(max_possible), size=num_inv_safe, replace=False)
+    )
+
     call_dates = [dates[i] for i in call_idxs]
-    call_amounts = rng.dirichlet(np.ones(num_investments)) * committed
+    call_amounts = rng.dirichlet(np.ones(num_inv_safe)) * committed
 
     investments = []
     for d, amt in zip(call_dates, call_amounts):
@@ -116,36 +116,41 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
     except:
         irr = float("nan")
 
-    kpis = {
+    return {
         "IRR (%)": round(irr, 2),
         "MOIC": round(total_val / total_called, 2),
         "DPI": round(total_dist / total_called, 2),
         "TVPI": round(total_val / total_called, 2),
+        "Called ($M)": round(total_called / 1e6, 1),
+        "Total Value ($M)": round(total_val / 1e6, 1),
     }
-
-    return kpis
 
 
 # ------------------ UI ------------------
-st.title("📊 PE Fund Dashboard")
+st.title("📊 PE Fund Performance Dashboard")
+
+st.caption("Simulated PE cash flows using TSLA & NVDA price trends")
 
 with st.sidebar:
+    st.header("Fund Settings")
     committed = st.slider("Committed Capital ($M)", 50, 500, 100)
     num_inv = st.slider("Number of Investments", 3, 10, 5)
 
-st.caption("⚠️ NVDA data includes stock split distortion (for demo only)")
+st.caption("⚠️ NVDA includes stock split distortion (for demo purposes)")
 
+# ------------------ RUN SIMULATION ------------------
 tsla = simulate_fund(TSLA_PRICES, num_inv, committed, seed=42)
 nvda = simulate_fund(NVDA_PRICES, num_inv, committed, seed=99)
 
-c1, c2 = st.columns(2)
+# ------------------ DISPLAY ------------------
+col1, col2 = st.columns(2)
 
-with c1:
-    st.subheader("🚗 Tesla Fund")
+with col1:
+    st.subheader("🚗 Tesla Growth Fund")
     for k, v in tsla.items():
         st.metric(k, v)
 
-with c2:
-    st.subheader("🟢 NVIDIA Fund")
+with col2:
+    st.subheader("🟢 NVIDIA Tech Fund")
     for k, v in nvda.items():
         st.metric(k, v)
