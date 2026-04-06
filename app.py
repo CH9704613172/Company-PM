@@ -16,9 +16,6 @@ refresh_rate = st.sidebar.selectbox(
     index=2
 )
 
-if refresh_rate > 0:
-    time.sleep(refresh_rate)
-    st.rerun()
 
 # ------------------ STYLING ------------------
 st.markdown("""
