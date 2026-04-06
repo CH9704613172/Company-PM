@@ -1,14 +1,9 @@
-"""
-PE Fund Performance Dashboard — Streamlit App
-=============================================
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 from scipy.optimize import brentq
 
-# ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="PE Fund Dashboard",
     page_icon="📈",
@@ -16,20 +11,17 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-  [data-testid="stMetric"] { background:#f8f9fa; border-radius:10px; padding:14px 18px; }
-  [data-testid="stMetricLabel"] { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#666; }
-  [data-testid="stMetricValue"] { font-size:28px; font-weight:700; }
+  [data-testid='stMetric'] { background:#f8f9fa; border-radius:10px; padding:14px 18px; }
+  [data-testid='stMetricLabel'] { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#666; }
+  [data-testid='stMetricValue'] { font-size:28px; font-weight:700; }
   .block-container { padding-top:1.5rem; }
   h1 { font-size:1.6rem !important; }
   h2 { font-size:1.1rem !important; border-bottom:1px solid #eee; padding-bottom:4px; }
 </style>
 """, unsafe_allow_html=True)
 
-
-# ── Price data (Yahoo Finance sourced, 2019-2024 monthly closes) ──────────────
 TSLA_PRICES = {
     "2019-01-31":59.51,"2019-02-28":62.07,"2019-03-29":65.95,"2019-04-30":64.12,
     "2019-05-31":36.46,"2019-06-28":44.45,"2019-07-31":41.48,"2019-08-30":44.55,
@@ -50,6 +42,7 @@ TSLA_PRICES = {
     "2024-05-31":178.79,"2024-06-28":197.88,"2024-07-31":232.10,"2024-08-30":214.14,
     "2024-09-30":261.63,"2024-10-31":249.85,"2024-11-29":352.56,"2024-12-31":403.84,
 }
+
 NVDA_PRICES = {
     "2019-01-31":35.16,"2019-02-28":42.78,"2019-03-29":45.94,"2019-04-30":47.59,
     "2019-05-31":32.98,"2019-06-28":39.32,"2019-07-31":40.66,"2019-08-30":39.42,
@@ -72,7 +65,6 @@ NVDA_PRICES = {
 }
 
 
-# ── Core engine (same as pe_engine.py) ───────────────────────────────────────
 def build_price_df(prices_dict):
     df = pd.DataFrame(list(prices_dict.items()), columns=["date", "Close"])
     df["date"] = pd.to_datetime(df["date"])
@@ -84,7 +76,8 @@ def xirr(cashflows):
     t0 = cashflows[0][0]
     years = [(c[0] - t0).days / 365.25 for c in cashflows]
     cfs = [c[1] for c in cashflows]
-    def npv(r): return sum(cf / (1 + r) ** t for cf, t in zip(cfs, years))
+    def npv(r):
+        return sum(cf / (1 + r) ** t for cf, t in zip(cfs, years))
     return brentq(npv, -0.9999, 100.0)
 
 
@@ -115,47 +108,62 @@ def simulate_fund(ticker, name, prices_dict, num_investments, committed_m, seed)
         sell_date = dates[sell_idx]
         shares_sold = inv["shares"] * rng.uniform(0.50, 0.80)
         px_out = float(price_df.loc[sell_date, "Close"])
-        exits.append({"date": sell_date, "shares_sold": shares_sold,
-                      "proceeds": shares_sold * px_out, "price_out": px_out})
+        exits.append({
+            "date": sell_date,
+            "shares_sold": shares_sold,
+            "proceeds": shares_sold * px_out,
+            "price_out": px_out,
+        })
 
     final_px = float(price_df.iloc[-1]["Close"])
     total_called = sum(i["cost"] for i in investments)
     total_dist = sum(e.get("proceeds", 0) for e in exits)
-    residual = max(sum((investments[k]["shares"] - exits[k].get("shares_sold", 0)) * final_px
-                       for k in range(len(investments))), 0)
+    residual = max(
+        sum((investments[k]["shares"] - exits[k].get("shares_sold", 0)) * final_px
+            for k in range(len(investments))), 0
+    )
     total_val = total_dist + residual
 
-    cf_list = ([(i["date"], -i["cost"]) for i in investments]
-               + [(e["date"], e["proceeds"]) for e in exits if e]
-               + [(dates[-1], residual)])
+    cf_list = (
+        [(i["date"], -i["cost"]) for i in investments]
+        + [(e["date"], e["proceeds"]) for e in exits if e]
+        + [(dates[-1], residual)]
+    )
     try:
         irr = xirr(cf_list) * 100
     except Exception:
         irr = float("nan")
 
-    # NAV series
     nav_rows = []
     for day in dates:
         called = sum(i["cost"] for i in investments if i["date"] <= day)
         if called == 0:
             continue
-        dist_so_far = sum(e.get("proceeds", 0) for e in exits if e.get("date") and e["date"] <= day)
+        dist_so_far = sum(
+            e.get("proceeds", 0) for e in exits if e.get("date") and e["date"] <= day
+        )
         px_today = float(price_df.loc[day, "Close"])
-        unrealized = max(sum((investments[k]["shares"] - exits[k].get("shares_sold", 0)) * px_today
-                             for k in range(len(investments)) if investments[k]["date"] <= day), 0)
+        unrealized = max(
+            sum((investments[k]["shares"] - exits[k].get("shares_sold", 0)) * px_today
+                for k in range(len(investments)) if investments[k]["date"] <= day), 0
+        )
         nav = unrealized + dist_so_far
-        nav_rows.append({"date": day, "NAV ($M)": nav / 1e6, "Called ($M)": called / 1e6,
-                          "Distributions ($M)": dist_so_far / 1e6, "MOIC": nav / called,
-                          "Stock Price": px_today})
+        nav_rows.append({
+            "date": day,
+            "NAV ($M)": round(nav / 1e6, 3),
+            "Called ($M)": round(called / 1e6, 3),
+            "Distributions ($M)": round(dist_so_far / 1e6, 3),
+            "MOIC": round(nav / called, 3),
+            "Stock Price": px_today,
+        })
     nav_df = pd.DataFrame(nav_rows)
 
-    # Waterfall
     wf_rows = []
     for k, inv in enumerate(investments):
         ex = exits[k]
         proceeds = ex.get("proceeds", 0)
         wf_rows.append({
-            "Investment": f"Inv {k+1}",
+            "Investment": f"Inv {k + 1}",
             "Entry Date": inv["date"].strftime("%b %Y"),
             "Cost ($M)": round(inv["cost"] / 1e6, 2),
             "Proceeds ($M)": round(proceeds / 1e6, 2),
@@ -180,10 +188,12 @@ def simulate_fund(ticker, name, prices_dict, num_investments, committed_m, seed)
     return kpis, nav_df, wf_df
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("⚙️ Fund Parameters")
-    fund_choice = st.selectbox("Fund", ["Tesla Growth Fund (TSLA)", "NVIDIA Tech Fund (NVDA)", "Both"])
+    fund_choice = st.selectbox(
+        "Fund",
+        ["Tesla Growth Fund (TSLA)", "NVIDIA Tech Fund (NVDA)", "Both"]
+    )
     st.divider()
     committed = st.slider("Committed Capital ($M)", 50, 500, 100, step=25)
     num_inv = st.slider("Number of investments", 3, 10, 6)
@@ -194,15 +204,11 @@ with st.sidebar:
     st.caption("**DPI** — Cash returned / called")
     st.caption("**TVPI** — (Dist + NAV) / called")
     st.caption("**RVPI** — Residual NAV / called")
-    st.divider()
-    st.markdown("🔗 [GitHub](https://github.com) · Built with Streamlit")
 
 
-# ── Header ────────────────────────────────────────────────────────────────────
 st.title("📊 PE Fund Performance Dashboard")
 st.caption("Simulated capital calls & distributions · Real Tesla & NVIDIA price data (2019–2024) · Yahoo Finance")
 
-# ── Compute ───────────────────────────────────────────────────────────────────
 funds_to_show = []
 if "Tesla" in fund_choice or "Both" in fund_choice:
     funds_to_show.append(("TSLA", "Tesla Growth Fund", TSLA_PRICES, 42))
@@ -214,109 +220,158 @@ for ticker, name, prices, seed in funds_to_show:
     kpis, nav_df, wf_df = simulate_fund(ticker, name, prices, num_inv, committed, seed)
     results[ticker] = {"name": name, "kpis": kpis, "nav": nav_df, "wf": wf_df}
 
-# ── KPI Row ───────────────────────────────────────────────────────────────────
 for ticker, r in results.items():
     k = r["kpis"]
-    st.subheader(f"{'🚗' if ticker=='TSLA' else '🟢'} {r['name']}")
+    st.subheader(f"{'🚗' if ticker == 'TSLA' else '🟢'} {r['name']}")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("IRR", f"{k['IRR (%)']:.1f}%")
     c2.metric("MOIC", f"{k['MOIC']:.2f}x")
     c3.metric("DPI", f"{k['DPI']:.2f}x")
     c4.metric("TVPI", f"{k['TVPI']:.2f}x")
     c5.metric("Called", f"${k['Called ($M)']}M")
-    c6.metric("Total Value", f"${k['Total Value ($M)']}M",
-              delta=f"+${round(k['Total Value ($M)']-k['Called ($M)'],1)}M")
+    c6.metric(
+        "Total Value",
+        f"${k['Total Value ($M)']}M",
+        delta=f"+${round(k['Total Value ($M)'] - k['Called ($M)'], 1)}M",
+    )
     st.divider()
 
-# ── Charts ────────────────────────────────────────────────────────────────────
 col_left, col_right = st.columns([3, 2])
 
 with col_left:
     st.subheader("NAV vs Capital Called over time")
     fig = go.Figure()
-    colors = {"TSLA": ("#E24B4A", "#1D9E75", "#378ADD"),
-              "NVDA": ("#378ADD", "#1D9E75", "#BA7517")}
+    palette = {
+        "TSLA": ("#E24B4A", "#1D9E75"),
+        "NVDA": ("#378ADD", "#BA7517"),
+    }
     for ticker, r in results.items():
         nav = r["nav"]
-        c = colors[ticker]
+        main_color, dist_color = palette[ticker]
         prefix = ticker + " " if len(results) > 1 else ""
-        fig.add_trace(go.Scatter(x=nav["date"], y=nav["NAV ($M)"],
-            name=f"{prefix}NAV", line=dict(color=c[0], width=2.5),
-            fill="tozeroy", fillcolor=c[0].replace(")", ",0.07)").replace("rgb","rgba") if "rgb" in c[0] else c[0]+"14"))
-        fig.add_trace(go.Scatter(x=nav["date"], y=nav["Called ($M)"],
-            name=f"{prefix}Called", line=dict(color="#888", width=1.5, dash="dot")))
-        fig.add_trace(go.Scatter(x=nav["date"], y=nav["Distributions ($M)"],
-            name=f"{prefix}Distributions", line=dict(color=c[1], width=1.5)))
-    fig.update_layout(height=320, margin=dict(l=0,r=0,t=10,b=10),
-                      legend=dict(orientation="h", y=-0.2),
-                      yaxis_title="$M", hovermode="x unified",
-                      plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+        fig.add_trace(go.Scatter(
+            x=nav["date"], y=nav["NAV ($M)"],
+            name=f"{prefix}NAV",
+            line=dict(color=main_color, width=2.5),
+            fill="tozeroy",
+            fillcolor=main_color + "18",
+        ))
+        fig.add_trace(go.Scatter(
+            x=nav["date"], y=nav["Called ($M)"],
+            name=f"{prefix}Called",
+            line=dict(color="#888", width=1.5, dash="dot"),
+        ))
+        fig.add_trace(go.Scatter(
+            x=nav["date"], y=nav["Distributions ($M)"],
+            name=f"{prefix}Distributions",
+            line=dict(color=dist_color, width=1.5),
+        ))
+    fig.update_layout(
+        height=320,
+        margin=dict(l=0, r=0, t=10, b=10),
+        legend=dict(orientation="h", y=-0.25),
+        yaxis_title="$M",
+        hovermode="x unified",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
     st.plotly_chart(fig, use_container_width=True)
 
 with col_right:
     st.subheader("DPI · RVPI composition")
-    fig2 = go.Figure()
-    names = [r["name"].replace(" Fund","").replace(" Growth","").replace(" Tech","")
-             for r in results.values()]
-    dpis  = [r["kpis"]["DPI"] for r in results.values()]
+    names = [
+        r["name"].replace(" Fund", "").replace(" Growth", "").replace(" Tech", "")
+        for r in results.values()
+    ]
+    dpis  = [r["kpis"]["DPI"]  for r in results.values()]
     rvpis = [r["kpis"]["RVPI"] for r in results.values()]
-    fig2.add_trace(go.Bar(name="DPI (realised)", y=names, x=dpis,
-                          orientation="h", marker_color="#1D9E75", marker_cornerradius=4))
-    fig2.add_trace(go.Bar(name="RVPI (unrealised)", y=names, x=rvpis,
-                          orientation="h", marker_color="#378ADD", marker_cornerradius=4))
-    fig2.update_layout(barmode="stack", height=320, margin=dict(l=0,r=0,t=10,b=10),
-                       legend=dict(orientation="h", y=-0.25),
-                       xaxis_title="Multiple (x)", hovermode="y unified",
-                       plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+    fig2 = go.Figure()
+    fig2.add_trace(go.Bar(
+        name="DPI (realised)", y=names, x=dpis,
+        orientation="h", marker_color="#1D9E75", marker_cornerradius=4,
+    ))
+    fig2.add_trace(go.Bar(
+        name="RVPI (unrealised)", y=names, x=rvpis,
+        orientation="h", marker_color="#378ADD", marker_cornerradius=4,
+    ))
+    fig2.update_layout(
+        barmode="stack",
+        height=320,
+        margin=dict(l=0, r=0, t=10, b=10),
+        legend=dict(orientation="h", y=-0.25),
+        xaxis_title="Multiple (x)",
+        hovermode="y unified",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
     fig2.update_xaxes(gridcolor="rgba(128,128,128,0.15)")
     fig2.update_yaxes(showgrid=False)
     st.plotly_chart(fig2, use_container_width=True)
 
-# ── Waterfall chart ───────────────────────────────────────────────────────────
 st.subheader("Per-investment waterfall (P&L $M)")
-fig3 = go.Figure()
 x_labels, y_vals, bar_colors = [], [], []
 for ticker, r in results.items():
     for _, row in r["wf"].iterrows():
-        label = (ticker+" " if len(results)>1 else "") + row["Investment"]
+        label = (ticker + " " if len(results) > 1 else "") + row["Investment"]
         x_labels.append(label)
         y_vals.append(row["P&L ($M)"])
         bar_colors.append("#1D9E75" if row["P&L ($M)"] >= 0 else "#D85A30")
 
-fig3.add_trace(go.Bar(x=x_labels, y=y_vals, marker_color=bar_colors,
-                      marker_cornerradius=5, text=[f"{'+'if v>=0 else ''}${v:.1f}M" for v in y_vals],
-                      textposition="outside"))
-fig3.update_layout(height=300, margin=dict(l=0,r=0,t=10,b=10), showlegend=False,
-                   yaxis_title="P&L ($M)", hovermode="x",
-                   plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+fig3 = go.Figure()
+fig3.add_trace(go.Bar(
+    x=x_labels, y=y_vals,
+    marker_color=bar_colors,
+    marker_cornerradius=5,
+    text=[f"{'+'if v >= 0 else ''}${v:.1f}M" for v in y_vals],
+    textposition="outside",
+))
+fig3.update_layout(
+    height=300,
+    margin=dict(l=0, r=0, t=10, b=10),
+    showlegend=False,
+    yaxis_title="P&L ($M)",
+    hovermode="x",
+    plot_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor="rgba(0,0,0,0)",
+)
 fig3.update_xaxes(showgrid=False)
-fig3.update_yaxes(gridcolor="rgba(128,128,128,0.15)",
-                  zeroline=True, zerolinecolor="rgba(128,128,128,0.4)", zerolinewidth=1)
+fig3.update_yaxes(
+    gridcolor="rgba(128,128,128,0.15)",
+    zeroline=True,
+    zerolinecolor="rgba(128,128,128,0.4)",
+    zerolinewidth=1,
+)
 st.plotly_chart(fig3, use_container_width=True)
 
-# ── Deal log table ────────────────────────────────────────────────────────────
 st.subheader("Deal log")
 for ticker, r in results.items():
     if len(results) > 1:
         st.caption(r["name"])
     wf = r["wf"].copy()
     wf["Multiple"] = wf["Multiple"].apply(lambda x: f"{x:.2f}x")
-    wf["P&L ($M)"] = wf["P&L ($M)"].apply(lambda x: f"+${x:.1f}M" if x >= 0 else f"-${abs(x):.1f}M")
-    st.dataframe(wf, use_container_width=True, hide_index=True,
-                 column_config={
-                     "Cost ($M)": st.column_config.NumberColumn(format="$%.2fM"),
-                     "Proceeds ($M)": st.column_config.NumberColumn(format="$%.2fM"),
-                 })
+    wf["P&L ($M)"] = wf["P&L ($M)"].apply(
+        lambda x: f"+${x:.1f}M" if x >= 0 else f"-${abs(x):.1f}M"
+    )
+    st.dataframe(
+        wf,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Cost ($M)":     st.column_config.NumberColumn(format="$%.2fM"),
+            "Proceeds ($M)": st.column_config.NumberColumn(format="$%.2fM"),
+        },
+    )
 
-# ── Export ────────────────────────────────────────────────────────────────────
 st.divider()
 st.subheader("📥 Download data")
 dl1, dl2, dl3 = st.columns(3)
+
 all_kpi = pd.DataFrame([{"Fund": r["name"], **r["kpis"]} for r in results.values()])
 all_nav = pd.concat([r["nav"].assign(ticker=t) for t, r in results.items()])
 all_wf  = pd.concat([r["wf"].assign(ticker=t) for t, r in results.items()])
-dl1.download_button("KPI summary CSV", all_kpi.to_csv(index=False), "kpis.csv", "text/csv")
-dl2.download_button("NAV series CSV", all_nav.to_csv(index=False), "nav_series.csv", "text/csv")
-dl3.download_button("Waterfall CSV", all_wf.to_csv(index=False), "waterfall.csv", "text/csv")
+
+dl1.download_button("⬇ KPI summary CSV", all_kpi.to_csv(index=False), "kpis.csv",       "text/csv")
+dl2.download_button("⬇ NAV series CSV",  all_nav.to_csv(index=False), "nav_series.csv",  "text/csv")
+dl3.download_button("⬇ Waterfall CSV",   all_wf.to_csv(index=False),  "waterfall.csv",   "text/csv")
