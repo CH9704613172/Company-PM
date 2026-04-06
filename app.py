@@ -2,20 +2,25 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import time
 from datetime import datetime
 
 # ------------------ PAGE CONFIG ------------------
 st.set_page_config(page_title="PE Dashboard", layout="wide")
 
-# ------------------ AUTO REFRESH ------------------
+# ------------------ AUTO REFRESH (SAFE) ------------------
 st.sidebar.markdown("### ⏱ Auto Refresh")
+
 refresh_rate = st.sidebar.selectbox(
     "Refresh every (seconds)",
     [0, 30, 60, 120],
     index=2
 )
 
+if refresh_rate > 0:
+    st.markdown(
+        f'<meta http-equiv="refresh" content="{refresh_rate}">',
+        unsafe_allow_html=True
+    )
 
 # ------------------ STYLING ------------------
 st.markdown("""
@@ -63,7 +68,8 @@ def get_prices(ticker):
         start="2019-01-01",
         end=datetime.today().strftime("%Y-%m-%d"),
         interval="1mo",
-        auto_adjust=True
+        auto_adjust=True,
+        progress=False
     )
 
     if df.empty:
@@ -149,21 +155,23 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
     # NAV
     nav_data = []
     for d in dates:
-        called = sum(i["cost"] for i in investments if i["date"] <= d)
-        dist = sum(e.get("proceeds", 0) for e in exits if e.get("date") and e["date"] <= d)
-
         px = float(price_df.loc[d, "Close"])
+
         unreal = sum(
             (investments[k]["shares"] - exits[k].get("shares_sold", 0)) * px
             for k in range(len(investments))
             if investments[k]["date"] <= d
         )
 
-        nav = unreal + dist
+        dist = sum(
+            e.get("proceeds", 0)
+            for e in exits
+            if e.get("date") and e["date"] <= d
+        )
 
         nav_data.append({
             "date": d,
-            "NAV": nav / 1e6
+            "NAV": (unreal + dist) / 1e6
         })
 
     nav_df = pd.DataFrame(nav_data).set_index("date")
@@ -201,10 +209,10 @@ TSLA_PRICES = get_prices("TSLA")
 NVDA_PRICES = get_prices("NVDA")
 
 if not TSLA_PRICES or not NVDA_PRICES:
-    st.error("⚠️ Failed to load market data. Please refresh.")
+    st.error("⚠️ Failed to load market data. Try refreshing.")
     st.stop()
 
-# ------------------ RUN SIMULATION ------------------
+# ------------------ SIMULATION ------------------
 tsla_kpi, tsla_nav, tsla_wf = simulate_fund(TSLA_PRICES, num_inv, committed, 42)
 nvda_kpi, nvda_nav, nvda_wf = simulate_fund(NVDA_PRICES, num_inv, committed, 99)
 
@@ -229,13 +237,15 @@ with c2:
 
 # ------------------ NAV ------------------
 st.subheader("📈 NAV Comparison")
+
 nav_compare = pd.DataFrame({
     "TSLA": tsla_nav["NAV"],
     "NVDA": nvda_nav["NAV"]
 })
+
 st.line_chart(nav_compare)
 
-# ------------------ DPI VS RVPI ------------------
+# ------------------ DPI / RVPI ------------------
 st.subheader("📊 DPI vs RVPI")
 
 tvpi_df = pd.DataFrame({
