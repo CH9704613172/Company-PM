@@ -2,43 +2,17 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from datetime import datetime
+import time
 
 # ------------------ PAGE CONFIG ------------------
-st.set_page_config(page_title="PE Dashboard", layout="wide")
+st.set_page_config(page_title="PE Fund Dashboard", layout="wide")
 
-# ------------------ AUTO REFRESH (SAFE) ------------------
+# ------------------ AUTO REFRESH ------------------
 st.sidebar.markdown("### ⏱ Auto Refresh")
-
-refresh_rate = st.sidebar.selectbox(
-    "Refresh every (seconds)",
-    [0, 30, 60, 120],
-    index=2
-)
+refresh_rate = st.sidebar.selectbox("Refresh every (seconds)", [0, 30, 60, 120], index=2)
 
 if refresh_rate > 0:
-    st.markdown(
-        f'<meta http-equiv="refresh" content="{refresh_rate}">',
-        unsafe_allow_html=True
-    )
-
-# ------------------ STYLING ------------------
-st.markdown("""
-<style>
-.card {
-    background-color: #ffffff;
-    padding: 18px;
-    border-radius: 12px;
-    box-shadow: 0px 2px 8px rgba(0,0,0,0.08);
-    margin-bottom: 20px;
-}
-.section-title {
-    font-size:18px;
-    font-weight:600;
-    margin-bottom:10px;
-}
-</style>
-""", unsafe_allow_html=True)
+    st.markdown(f'<meta http-equiv="refresh" content="{refresh_rate}">', unsafe_allow_html=True)
 
 # ------------------ XIRR ------------------
 def xirr(cashflows, guess=0.1):
@@ -46,10 +20,7 @@ def xirr(cashflows, guess=0.1):
     t0 = cashflows[0][0]
 
     def npv(rate):
-        return sum(
-            cf / (1 + rate) ** ((d - t0).days / 365.25)
-            for d, cf in cashflows
-        )
+        return sum(cf / (1 + rate) ** ((d - t0).days / 365.25) for d, cf in cashflows)
 
     rate = guess
     for _ in range(100):
@@ -60,35 +31,36 @@ def xirr(cashflows, guess=0.1):
 
     return rate
 
-# ------------------ LIVE DATA ------------------
+# ------------------ DATA FETCH ------------------
 @st.cache_data(ttl=300)
 def get_prices(ticker):
-    df = yf.download(
-        ticker,
-        start="2019-01-01",
-        end=datetime.today().strftime("%Y-%m-%d"),
-        interval="1mo",
-        auto_adjust=True,
-        progress=False
-    )
+    for _ in range(3):
+        try:
+            df = yf.download(
+                ticker,
+                period="5y",
+                interval="1mo",
+                auto_adjust=True,
+                progress=False,
+                threads=False
+            )
 
-    if df.empty:
-        return {}
+            if df is not None and not df.empty:
+                df = df["Close"].dropna()
+                df.index = pd.to_datetime(df.index, errors="coerce")
+                df = df[~df.index.isna()]
+                df.index = df.index.strftime("%Y-%m-%d")
+                return df.to_dict()
 
-    df = df["Close"].dropna()
+        except:
+            time.sleep(1)
 
-    # ✅ FIXED DATE HANDLING
-    df.index = pd.to_datetime(df.index, errors="coerce")
-    df = df[~df.index.isna()]
-    df.index = df.index.strftime("%Y-%m-%d")
-
-    return df.to_dict()
+    return {}
 
 # ------------------ SIMULATION ------------------
 @st.cache_data
 def simulate_fund(prices_dict, num_investments, committed_m, seed):
 
-    # ✅ FIXED DATE PARSING
     price_df = pd.Series(prices_dict).to_frame(name="Close")
     price_df.index = pd.to_datetime(price_df.index, errors="coerce")
     price_df = price_df.dropna().sort_index()
@@ -97,8 +69,8 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
         return {}, pd.DataFrame(), pd.DataFrame()
 
     committed = committed_m * 1_000_000
-
     rng = np.random.default_rng(seed)
+
     dates = price_df.index.tolist()
     n = len(dates)
 
@@ -108,10 +80,7 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
     max_possible = max(1, n // 2)
     num_inv_safe = min(num_investments, max_possible)
 
-    call_idxs = sorted(
-        rng.choice(range(max_possible), size=num_inv_safe, replace=False)
-    )
-
+    call_idxs = sorted(rng.choice(range(max_possible), size=num_inv_safe, replace=False))
     call_dates = [dates[i] for i in call_idxs]
     call_amounts = rng.dirichlet(np.ones(num_inv_safe)) * committed
 
@@ -161,7 +130,6 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
     except:
         irr = float("nan")
 
-    # NAV
     nav_data = []
     for d in dates:
         px = float(price_df.loc[d, "Close"])
@@ -178,21 +146,14 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
             if e.get("date") and e["date"] <= d
         )
 
-        nav_data.append({
-            "date": d,
-            "NAV": (unreal + dist) / 1e6
-        })
+        nav_data.append({"date": d, "NAV": (unreal + dist) / 1e6})
 
     nav_df = pd.DataFrame(nav_data).set_index("date")
 
-    # Waterfall
     wf = []
     for i, inv in enumerate(investments):
         proceeds = exits[i].get("proceeds", 0)
-        wf.append({
-            "Investment": f"Inv {i+1}",
-            "P&L": (proceeds - inv["cost"]) / 1e6
-        })
+        wf.append({"Investment": f"Inv {i+1}", "P&L": (proceeds - inv["cost"]) / 1e6})
 
     wf_df = pd.DataFrame(wf).set_index("Investment")
 
@@ -217,9 +178,18 @@ with st.sidebar:
 TSLA_PRICES = get_prices("TSLA")
 NVDA_PRICES = get_prices("NVDA")
 
-if not TSLA_PRICES or not NVDA_PRICES:
-    st.error("⚠️ Failed to load market data. Try refreshing.")
-    st.stop()
+# ✅ FALLBACK DATA (NO CRASH)
+if not TSLA_PRICES:
+    st.warning("TSLA data failed. Using fallback.")
+    TSLA_PRICES = {
+        "2022-01-01": 100, "2023-01-01": 150, "2024-01-01": 200, "2025-01-01": 250
+    }
+
+if not NVDA_PRICES:
+    st.warning("NVDA data failed. Using fallback.")
+    NVDA_PRICES = {
+        "2022-01-01": 200, "2023-01-01": 400, "2024-01-01": 700, "2025-01-01": 900
+    }
 
 # ------------------ RUN ------------------
 tsla_kpi, tsla_nav, tsla_wf = simulate_fund(TSLA_PRICES, num_inv, committed, 42)
@@ -231,18 +201,14 @@ st.subheader("📊 Fund Comparison")
 c1, c2 = st.columns(2)
 
 with c1:
-    st.markdown("### 🚗 Tesla Fund")
-    st.metric("IRR", f"{tsla_kpi['IRR']}%")
-    st.metric("MOIC", f"{tsla_kpi['MOIC']}x")
-    st.metric("DPI", f"{tsla_kpi['DPI']}x")
-    st.metric("TVPI", f"{tsla_kpi['TVPI']}x")
+    st.markdown("### 🚗 Tesla")
+    for k, v in tsla_kpi.items():
+        st.metric(k, f"{v}")
 
 with c2:
-    st.markdown("### 🟢 NVIDIA Fund")
-    st.metric("IRR", f"{nvda_kpi['IRR']}%")
-    st.metric("MOIC", f"{nvda_kpi['MOIC']}x")
-    st.metric("DPI", f"{nvda_kpi['DPI']}x")
-    st.metric("TVPI", f"{nvda_kpi['TVPI']}x")
+    st.markdown("### 🟢 NVIDIA")
+    for k, v in nvda_kpi.items():
+        st.metric(k, f"{v}")
 
 # ------------------ NAV ------------------
 st.subheader("📈 NAV Comparison")
