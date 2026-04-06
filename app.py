@@ -4,7 +4,6 @@ import numpy as np
 import yfinance as yf
 import time
 
-# ------------------ PAGE CONFIG ------------------
 st.set_page_config(page_title="PE Fund Dashboard", layout="wide")
 
 # ------------------ AUTO REFRESH ------------------
@@ -31,6 +30,12 @@ def xirr(cashflows, guess=0.1):
 
     return rate
 
+# ------------------ SAMPLE DATA (CRITICAL FIX) ------------------
+def generate_sample_data(start_price=100):
+    dates = pd.date_range(start="2020-01-01", periods=60, freq="M")
+    prices = start_price * (1 + np.cumsum(np.random.normal(0.02, 0.05, len(dates))))
+    return {d.strftime("%Y-%m-%d"): float(p) for d, p in zip(dates, prices)}
+
 # ------------------ DATA FETCH ------------------
 @st.cache_data(ttl=300)
 def get_prices(ticker):
@@ -51,6 +56,7 @@ def get_prices(ticker):
                 df = df[~df.index.isna()]
                 df.index = df.index.strftime("%Y-%m-%d")
                 return df.to_dict()
+
         except:
             time.sleep(1)
 
@@ -64,8 +70,7 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
     price_df.index = pd.to_datetime(price_df.index, errors="coerce")
     price_df = price_df.dropna().sort_index()
 
-    # ✅ ALWAYS SAFE RETURN
-    if price_df.empty or len(price_df) < 2:
+    if len(price_df) < 12:
         dummy_nav = pd.DataFrame({"NAV": [0]})
         dummy_wf = pd.DataFrame({"P&L": [0]})
         return {"IRR": 0, "MOIC": 0, "DPI": 0, "TVPI": 0}, dummy_nav, dummy_wf
@@ -76,7 +81,7 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
     dates = price_df.index.tolist()
     n = len(dates)
 
-    max_possible = max(1, n // 2)
+    max_possible = n // 2
     num_inv_safe = min(num_investments, max_possible)
 
     call_idxs = sorted(rng.choice(range(max_possible), size=num_inv_safe, replace=False))
@@ -129,7 +134,7 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
     except:
         irr = 0
 
-    # ------------------ NAV ------------------
+    # NAV
     nav_data = []
     for d in dates:
         px = float(price_df.loc[d, "Close"])
@@ -150,11 +155,10 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
 
     nav_df = pd.DataFrame(nav_data).set_index("date")
 
-    # ✅ Ensure NAV always exists
     if "NAV" not in nav_df.columns:
         nav_df["NAV"] = 0
 
-    # ------------------ WATERFALL ------------------
+    # Waterfall
     wf = []
     for i, inv in enumerate(investments):
         proceeds = exits[i].get("proceeds", 0)
@@ -183,18 +187,18 @@ with st.sidebar:
 TSLA_PRICES = get_prices("TSLA")
 NVDA_PRICES = get_prices("NVDA")
 
-# ✅ FALLBACK (NO FAILURE)
+# ✅ STRONG FALLBACK
 if not TSLA_PRICES:
-    st.warning("TSLA data failed. Using fallback.")
-    TSLA_PRICES = {
-        "2022-01-01": 100, "2023-01-01": 150, "2024-01-01": 200, "2025-01-01": 250
-    }
+    st.warning("Using TSLA sample data")
+    TSLA_PRICES = generate_sample_data(150)
 
 if not NVDA_PRICES:
-    st.warning("NVDA data failed. Using fallback.")
-    NVDA_PRICES = {
-        "2022-01-01": 200, "2023-01-01": 400, "2024-01-01": 700, "2025-01-01": 900
-    }
+    st.warning("Using NVDA sample data")
+    NVDA_PRICES = generate_sample_data(300)
+
+# ------------------ DEBUG (OPTIONAL) ------------------
+st.sidebar.write("TSLA data points:", len(TSLA_PRICES))
+st.sidebar.write("NVDA data points:", len(NVDA_PRICES))
 
 # ------------------ RUN ------------------
 tsla_kpi, tsla_nav, tsla_wf = simulate_fund(TSLA_PRICES, num_inv, committed, 42)
@@ -218,18 +222,12 @@ with c2:
 # ------------------ NAV ------------------
 st.subheader("📈 NAV Comparison")
 
-tsla_series = tsla_nav["NAV"] if "NAV" in tsla_nav.columns else pd.Series([0])
-nvda_series = nvda_nav["NAV"] if "NAV" in nvda_nav.columns else pd.Series([0])
-
 nav_compare = pd.DataFrame({
-    "TSLA": tsla_series,
-    "NVDA": nvda_series
+    "TSLA": tsla_nav["NAV"],
+    "NVDA": nvda_nav["NAV"]
 })
 
-if not nav_compare.empty:
-    st.line_chart(nav_compare)
-else:
-    st.warning("No NAV data available")
+st.line_chart(nav_compare)
 
 # ------------------ DPI / RVPI ------------------
 st.subheader("📊 DPI vs RVPI")
