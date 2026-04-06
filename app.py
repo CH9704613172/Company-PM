@@ -76,6 +76,10 @@ def get_prices(ticker):
         return {}
 
     df = df["Close"].dropna()
+
+    # ✅ FIXED DATE HANDLING
+    df.index = pd.to_datetime(df.index, errors="coerce")
+    df = df[~df.index.isna()]
     df.index = df.index.strftime("%Y-%m-%d")
 
     return df.to_dict()
@@ -83,9 +87,14 @@ def get_prices(ticker):
 # ------------------ SIMULATION ------------------
 @st.cache_data
 def simulate_fund(prices_dict, num_investments, committed_m, seed):
-    price_df = pd.DataFrame(list(prices_dict.items()), columns=["date", "Close"])
-    price_df["date"] = pd.to_datetime(price_df["date"])
-    price_df = price_df.set_index("date").sort_index()
+
+    # ✅ FIXED DATE PARSING
+    price_df = pd.Series(prices_dict).to_frame(name="Close")
+    price_df.index = pd.to_datetime(price_df.index, errors="coerce")
+    price_df = price_df.dropna().sort_index()
+
+    if price_df.empty:
+        return {}, pd.DataFrame(), pd.DataFrame()
 
     committed = committed_m * 1_000_000
 
@@ -212,7 +221,7 @@ if not TSLA_PRICES or not NVDA_PRICES:
     st.error("⚠️ Failed to load market data. Try refreshing.")
     st.stop()
 
-# ------------------ SIMULATION ------------------
+# ------------------ RUN ------------------
 tsla_kpi, tsla_nav, tsla_wf = simulate_fund(TSLA_PRICES, num_inv, committed, 42)
 nvda_kpi, nvda_nav, nvda_wf = simulate_fund(NVDA_PRICES, num_inv, committed, 99)
 
