@@ -4,7 +4,7 @@ import numpy as np
 from scipy.optimize import brentq
 
 st.set_page_config(
-    page_title="PE Fund Dashboard",
+    page_title="Private Equity Fund Dashboard",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -194,7 +194,7 @@ def simulate_fund(ticker, name, prices_dict, num_investments, committed_m, seed)
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("⚙️ Fund Parameters")
+    st.title("Parameters")
     fund_choice = st.selectbox(
         "Fund",
         ["Tesla Growth Fund (TSLA)", "NVIDIA Tech Fund (NVDA)", "Both"]
@@ -211,8 +211,8 @@ with st.sidebar:
     st.caption("**RVPI** — Residual NAV / called")
 
 # ── Header ────────────────────────────────────────────────────────────────────
-st.title("📊 PE Fund Performance Dashboard")
-st.caption("Simulated capital calls & distributions · Real Tesla & NVIDIA price data (2019–2026) · Yahoo Finance")
+st.title("📊 Private Equity Fund Performance Dashboard")
+st.caption("Simulated capital calls & distributions ·  Tesla & NVIDIA price data (2019–2026) · Yahoo Finance")
 
 # ── Compute ───────────────────────────────────────────────────────────────────
 funds_to_show = []
