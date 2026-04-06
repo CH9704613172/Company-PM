@@ -138,11 +138,13 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
             if investments[k]["date"] <= d
         )
 
+        nav = unreal + dist
+
         nav_data.append({
             "date": d,
-            "NAV": nav/1e6 if (nav := unreal + dist) else 0,
-            "Called": called/1e6,
-            "Distributions": dist/1e6
+            "NAV": nav / 1e6,
+            "Called": called / 1e6,
+            "Distributions": dist / 1e6
         })
 
     nav_df = pd.DataFrame(nav_data).set_index("date")
@@ -172,43 +174,69 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
 st.title("📊 PE Fund Performance Dashboard")
 
 with st.sidebar:
+    st.header("Fund Settings")
     committed = st.slider("Committed Capital ($M)", 50, 500, 100)
     num_inv = st.slider("Number of Investments", 3, 10, 5)
 
-# Run
+st.caption("⚠️ NVDA includes stock split distortion (demo only)")
+
+# ------------------ RUN BOTH FUNDS ------------------
 tsla_kpi, tsla_nav, tsla_wf = simulate_fund(TSLA_PRICES, num_inv, committed, 42)
+nvda_kpi, nvda_nav, nvda_wf = simulate_fund(NVDA_PRICES, num_inv, committed, 99)
 
-# ------------------ KPI ------------------
-st.subheader("🚗 Tesla Growth Fund")
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("IRR", f"{tsla_kpi['IRR']}%")
-c2.metric("MOIC", f"{tsla_kpi['MOIC']}x")
-c3.metric("DPI", f"{tsla_kpi['DPI']}x")
-c4.metric("TVPI", f"{tsla_kpi['TVPI']}x")
+# ------------------ KPI COMPARISON ------------------
+st.subheader("📊 Fund Comparison")
 
-# ------------------ CHARTS ------------------
+c1, c2 = st.columns(2)
+
+with c1:
+    st.markdown("### 🚗 Tesla Growth Fund")
+    st.metric("IRR", f"{tsla_kpi['IRR']}%")
+    st.metric("MOIC", f"{tsla_kpi['MOIC']}x")
+    st.metric("DPI", f"{tsla_kpi['DPI']}x")
+    st.metric("TVPI", f"{tsla_kpi['TVPI']}x")
+
+with c2:
+    st.markdown("### 🟢 NVIDIA Tech Fund")
+    st.metric("IRR", f"{nvda_kpi['IRR']}%")
+    st.metric("MOIC", f"{nvda_kpi['MOIC']}x")
+    st.metric("DPI", f"{nvda_kpi['DPI']}x")
+    st.metric("TVPI", f"{nvda_kpi['TVPI']}x")
+
+# ------------------ NAV COMPARISON ------------------
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">NAV Comparison</div>', unsafe_allow_html=True)
+
+nav_compare = pd.DataFrame({
+    "TSLA NAV": tsla_nav["NAV"],
+    "NVDA NAV": nvda_nav["NAV"]
+})
+
+st.line_chart(nav_compare)
+st.markdown('</div>', unsafe_allow_html=True)
+
+# ------------------ DPI / RVPI ------------------
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">DPI vs RVPI</div>', unsafe_allow_html=True)
+
+tvpi_df = pd.DataFrame({
+    "DPI": [tsla_kpi["DPI"], nvda_kpi["DPI"]],
+    "RVPI": [
+        tsla_kpi["TVPI"] - tsla_kpi["DPI"],
+        nvda_kpi["TVPI"] - nvda_kpi["DPI"]
+    ]
+}, index=["TSLA", "NVDA"])
+
+st.bar_chart(tvpi_df)
+st.markdown('</div>', unsafe_allow_html=True)
+
+# ------------------ WATERFALL ------------------
 col1, col2 = st.columns(2)
 
 with col1:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">NAV vs Capital Called</div>', unsafe_allow_html=True)
-    st.line_chart(tsla_nav)
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("### 🚗 Tesla Waterfall")
+    st.bar_chart(tsla_wf)
 
 with col2:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">DPI vs RVPI</div>', unsafe_allow_html=True)
-
-    tvpi_df = pd.DataFrame({
-        "DPI": [tsla_kpi["DPI"]],
-        "RVPI": [tsla_kpi["TVPI"] - tsla_kpi["DPI"]]
-    }, index=["Fund"])
-
-    st.bar_chart(tvpi_df)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# ------------------ WATERFALL ------------------
-st.markdown('<div class="card">', unsafe_allow_html=True)
-st.markdown('<div class="section-title">Per-investment Waterfall</div>', unsafe_allow_html=True)
-st.bar_chart(tsla_wf)
-st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("### 🟢 NVIDIA Waterfall")
+    st.bar_chart(nvda_wf)
