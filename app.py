@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
 from scipy.optimize import brentq
 
 st.set_page_config(
@@ -17,8 +16,6 @@ st.markdown("""
   [data-testid='stMetricLabel'] { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#666; }
   [data-testid='stMetricValue'] { font-size:28px; font-weight:700; }
   .block-container { padding-top:1.5rem; }
-  h1 { font-size:1.6rem !important; }
-  h2 { font-size:1.1rem !important; border-bottom:1px solid #eee; padding-bottom:4px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -154,9 +151,8 @@ def simulate_fund(ticker, name, prices_dict, num_investments, committed_m, seed)
             "Called ($M)": round(called / 1e6, 3),
             "Distributions ($M)": round(dist_so_far / 1e6, 3),
             "MOIC": round(nav / called, 3),
-            "Stock Price": px_today,
         })
-    nav_df = pd.DataFrame(nav_rows)
+    nav_df = pd.DataFrame(nav_rows).set_index("date")
 
     wf_rows = []
     for k, inv in enumerate(investments):
@@ -188,6 +184,7 @@ def simulate_fund(ticker, name, prices_dict, num_investments, committed_m, seed)
     return kpis, nav_df, wf_df
 
 
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("⚙️ Fund Parameters")
     fund_choice = st.selectbox(
@@ -205,10 +202,11 @@ with st.sidebar:
     st.caption("**TVPI** — (Dist + NAV) / called")
     st.caption("**RVPI** — Residual NAV / called")
 
-
+# ── Header ────────────────────────────────────────────────────────────────────
 st.title("📊 PE Fund Performance Dashboard")
 st.caption("Simulated capital calls & distributions · Real Tesla & NVIDIA price data (2019–2024) · Yahoo Finance")
 
+# ── Compute ───────────────────────────────────────────────────────────────────
 funds_to_show = []
 if "Tesla" in fund_choice or "Both" in fund_choice:
     funds_to_show.append(("TSLA", "Tesla Growth Fund", TSLA_PRICES, 42))
@@ -220,6 +218,7 @@ for ticker, name, prices, seed in funds_to_show:
     kpis, nav_df, wf_df = simulate_fund(ticker, name, prices, num_inv, committed, seed)
     results[ticker] = {"name": name, "kpis": kpis, "nav": nav_df, "wf": wf_df}
 
+# ── KPI cards ─────────────────────────────────────────────────────────────────
 for ticker, r in results.items():
     k = r["kpis"]
     st.subheader(f"{'🚗' if ticker == 'TSLA' else '🟢'} {r['name']}")
@@ -236,115 +235,42 @@ for ticker, r in results.items():
     )
     st.divider()
 
-col_left, col_right = st.columns([3, 2])
+# ── NAV line chart ────────────────────────────────────────────────────────────
+st.subheader("NAV vs Capital Called over time")
+if len(results) == 1:
+    ticker, r = list(results.items())[0]
+    st.line_chart(r["nav"][["NAV ($M)", "Called ($M)", "Distributions ($M)"]])
+else:
+    nav_combined = pd.DataFrame({
+        "TSLA NAV ($M)": results["TSLA"]["nav"]["NAV ($M)"],
+        "NVDA NAV ($M)": results["NVDA"]["nav"]["NAV ($M)"],
+        "TSLA Called ($M)": results["TSLA"]["nav"]["Called ($M)"],
+        "NVDA Called ($M)": results["NVDA"]["nav"]["Called ($M)"],
+    })
+    st.line_chart(nav_combined)
 
-with col_left:
-    st.subheader("NAV vs Capital Called over time")
-    fig = go.Figure()
-    palette = {
-        "TSLA": ("#E24B4A", "#1D9E75"),
-        "NVDA": ("#378ADD", "#BA7517"),
+# ── TVPI breakdown ────────────────────────────────────────────────────────────
+st.subheader("DPI · RVPI · TVPI breakdown")
+tvpi_data = pd.DataFrame([
+    {
+        "Fund": r["name"].replace(" Fund", "").replace(" Growth", "").replace(" Tech", ""),
+        "DPI (realised)": r["kpis"]["DPI"],
+        "RVPI (unrealised)": r["kpis"]["RVPI"],
     }
-    for ticker, r in results.items():
-        nav = r["nav"]
-        main_color, dist_color = palette[ticker]
-        prefix = ticker + " " if len(results) > 1 else ""
-        fig.add_trace(go.Scatter(
-            x=nav["date"], y=nav["NAV ($M)"],
-            name=f"{prefix}NAV",
-            line=dict(color=main_color, width=2.5),
-            fill="tozeroy",
-            fillcolor=main_color + "18",
-        ))
-        fig.add_trace(go.Scatter(
-            x=nav["date"], y=nav["Called ($M)"],
-            name=f"{prefix}Called",
-            line=dict(color="#888", width=1.5, dash="dot"),
-        ))
-        fig.add_trace(go.Scatter(
-            x=nav["date"], y=nav["Distributions ($M)"],
-            name=f"{prefix}Distributions",
-            line=dict(color=dist_color, width=1.5),
-        ))
-    fig.update_layout(
-        height=320,
-        margin=dict(l=0, r=0, t=10, b=10),
-        legend=dict(orientation="h", y=-0.25),
-        yaxis_title="$M",
-        hovermode="x unified",
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
-    st.plotly_chart(fig, use_container_width=True)
+    for r in results.values()
+]).set_index("Fund")
+st.bar_chart(tvpi_data)
 
-with col_right:
-    st.subheader("DPI · RVPI composition")
-    names = [
-        r["name"].replace(" Fund", "").replace(" Growth", "").replace(" Tech", "")
-        for r in results.values()
-    ]
-    dpis  = [r["kpis"]["DPI"]  for r in results.values()]
-    rvpis = [r["kpis"]["RVPI"] for r in results.values()]
-    fig2 = go.Figure()
-    fig2.add_trace(go.Bar(
-        name="DPI (realised)", y=names, x=dpis,
-        orientation="h", marker_color="#1D9E75", marker_cornerradius=4,
-    ))
-    fig2.add_trace(go.Bar(
-        name="RVPI (unrealised)", y=names, x=rvpis,
-        orientation="h", marker_color="#378ADD", marker_cornerradius=4,
-    ))
-    fig2.update_layout(
-        barmode="stack",
-        height=320,
-        margin=dict(l=0, r=0, t=10, b=10),
-        legend=dict(orientation="h", y=-0.25),
-        xaxis_title="Multiple (x)",
-        hovermode="y unified",
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    fig2.update_xaxes(gridcolor="rgba(128,128,128,0.15)")
-    fig2.update_yaxes(showgrid=False)
-    st.plotly_chart(fig2, use_container_width=True)
-
+# ── Waterfall table + P&L bar ─────────────────────────────────────────────────
 st.subheader("Per-investment waterfall (P&L $M)")
-x_labels, y_vals, bar_colors = [], [], []
 for ticker, r in results.items():
-    for _, row in r["wf"].iterrows():
-        label = (ticker + " " if len(results) > 1 else "") + row["Investment"]
-        x_labels.append(label)
-        y_vals.append(row["P&L ($M)"])
-        bar_colors.append("#1D9E75" if row["P&L ($M)"] >= 0 else "#D85A30")
+    if len(results) > 1:
+        st.caption(r["name"])
+    wf = r["wf"].copy()
+    pnl_chart = wf.set_index("Investment")[["P&L ($M)"]]
+    st.bar_chart(pnl_chart)
 
-fig3 = go.Figure()
-fig3.add_trace(go.Bar(
-    x=x_labels, y=y_vals,
-    marker_color=bar_colors,
-    marker_cornerradius=5,
-    text=[f"{'+'if v >= 0 else ''}${v:.1f}M" for v in y_vals],
-    textposition="outside",
-))
-fig3.update_layout(
-    height=300,
-    margin=dict(l=0, r=0, t=10, b=10),
-    showlegend=False,
-    yaxis_title="P&L ($M)",
-    hovermode="x",
-    plot_bgcolor="rgba(0,0,0,0)",
-    paper_bgcolor="rgba(0,0,0,0)",
-)
-fig3.update_xaxes(showgrid=False)
-fig3.update_yaxes(
-    gridcolor="rgba(128,128,128,0.15)",
-    zeroline=True,
-    zerolinecolor="rgba(128,128,128,0.4)",
-    zerolinewidth=1,
-)
-st.plotly_chart(fig3, use_container_width=True)
-
+# ── Deal log ──────────────────────────────────────────────────────────────────
 st.subheader("Deal log")
 for ticker, r in results.items():
     if len(results) > 1:
@@ -354,16 +280,9 @@ for ticker, r in results.items():
     wf["P&L ($M)"] = wf["P&L ($M)"].apply(
         lambda x: f"+${x:.1f}M" if x >= 0 else f"-${abs(x):.1f}M"
     )
-    st.dataframe(
-        wf,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Cost ($M)":     st.column_config.NumberColumn(format="$%.2fM"),
-            "Proceeds ($M)": st.column_config.NumberColumn(format="$%.2fM"),
-        },
-    )
+    st.dataframe(wf, use_container_width=True, hide_index=True)
 
+# ── Downloads ─────────────────────────────────────────────────────────────────
 st.divider()
 st.subheader("📥 Download data")
 dl1, dl2, dl3 = st.columns(3)
@@ -372,6 +291,6 @@ all_kpi = pd.DataFrame([{"Fund": r["name"], **r["kpis"]} for r in results.values
 all_nav = pd.concat([r["nav"].assign(ticker=t) for t, r in results.items()])
 all_wf  = pd.concat([r["wf"].assign(ticker=t) for t, r in results.items()])
 
-dl1.download_button("⬇ KPI summary CSV", all_kpi.to_csv(index=False), "kpis.csv",       "text/csv")
-dl2.download_button("⬇ NAV series CSV",  all_nav.to_csv(index=False), "nav_series.csv",  "text/csv")
+dl1.download_button("⬇ KPI summary CSV", all_kpi.to_csv(index=False), "kpis.csv",        "text/csv")
+dl2.download_button("⬇ NAV series CSV",  all_nav.to_csv(),            "nav_series.csv",  "text/csv")
 dl3.download_button("⬇ Waterfall CSV",   all_wf.to_csv(index=False),  "waterfall.csv",   "text/csv")
