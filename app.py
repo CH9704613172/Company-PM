@@ -51,7 +51,6 @@ def get_prices(ticker):
                 df = df[~df.index.isna()]
                 df.index = df.index.strftime("%Y-%m-%d")
                 return df.to_dict()
-
         except:
             time.sleep(1)
 
@@ -65,17 +64,17 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
     price_df.index = pd.to_datetime(price_df.index, errors="coerce")
     price_df = price_df.dropna().sort_index()
 
-    if price_df.empty:
-        return {}, pd.DataFrame(), pd.DataFrame()
+    # ✅ ALWAYS SAFE RETURN
+    if price_df.empty or len(price_df) < 2:
+        dummy_nav = pd.DataFrame({"NAV": [0]})
+        dummy_wf = pd.DataFrame({"P&L": [0]})
+        return {"IRR": 0, "MOIC": 0, "DPI": 0, "TVPI": 0}, dummy_nav, dummy_wf
 
     committed = committed_m * 1_000_000
     rng = np.random.default_rng(seed)
 
     dates = price_df.index.tolist()
     n = len(dates)
-
-    if n < 2:
-        return {}, pd.DataFrame(), pd.DataFrame()
 
     max_possible = max(1, n // 2)
     num_inv_safe = min(num_investments, max_possible)
@@ -128,8 +127,9 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
     try:
         irr = xirr(cf_list) * 100
     except:
-        irr = float("nan")
+        irr = 0
 
+    # ------------------ NAV ------------------
     nav_data = []
     for d in dates:
         px = float(price_df.loc[d, "Close"])
@@ -150,6 +150,11 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
 
     nav_df = pd.DataFrame(nav_data).set_index("date")
 
+    # ✅ Ensure NAV always exists
+    if "NAV" not in nav_df.columns:
+        nav_df["NAV"] = 0
+
+    # ------------------ WATERFALL ------------------
     wf = []
     for i, inv in enumerate(investments):
         proceeds = exits[i].get("proceeds", 0)
@@ -178,7 +183,7 @@ with st.sidebar:
 TSLA_PRICES = get_prices("TSLA")
 NVDA_PRICES = get_prices("NVDA")
 
-# ✅ FALLBACK DATA (NO CRASH)
+# ✅ FALLBACK (NO FAILURE)
 if not TSLA_PRICES:
     st.warning("TSLA data failed. Using fallback.")
     TSLA_PRICES = {
@@ -213,12 +218,18 @@ with c2:
 # ------------------ NAV ------------------
 st.subheader("📈 NAV Comparison")
 
+tsla_series = tsla_nav["NAV"] if "NAV" in tsla_nav.columns else pd.Series([0])
+nvda_series = nvda_nav["NAV"] if "NAV" in nvda_nav.columns else pd.Series([0])
+
 nav_compare = pd.DataFrame({
-    "TSLA": tsla_nav["NAV"],
-    "NVDA": nvda_nav["NAV"]
+    "TSLA": tsla_series,
+    "NVDA": nvda_series
 })
 
-st.line_chart(nav_compare)
+if not nav_compare.empty:
+    st.line_chart(nav_compare)
+else:
+    st.warning("No NAV data available")
 
 # ------------------ DPI / RVPI ------------------
 st.subheader("📊 DPI vs RVPI")
