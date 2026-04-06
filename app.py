@@ -212,7 +212,7 @@ with st.sidebar:
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("📊 PE Fund Performance Dashboard")
-st.caption("Simulated capital calls & distributions · Real Tesla & NVIDIA price data (2019–2024) · Yahoo Finance")
+st.caption("Simulated capital calls & distributions · Real Tesla & NVIDIA price data (2019–2026) · Yahoo Finance")
 
 # ── Compute ───────────────────────────────────────────────────────────────────
 funds_to_show = []
