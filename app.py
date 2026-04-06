@@ -1,9 +1,24 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import yfinance as yf
+import time
+from datetime import datetime
 
 # ------------------ PAGE CONFIG ------------------
 st.set_page_config(page_title="PE Dashboard", layout="wide")
+
+# ------------------ AUTO REFRESH ------------------
+st.sidebar.markdown("### ⏱ Auto Refresh")
+refresh_rate = st.sidebar.selectbox(
+    "Refresh every (seconds)",
+    [0, 30, 60, 120],
+    index=2
+)
+
+if refresh_rate > 0:
+    time.sleep(refresh_rate)
+    st.rerun()
 
 # ------------------ STYLING ------------------
 st.markdown("""
@@ -43,31 +58,40 @@ def xirr(cashflows, guess=0.1):
 
     return rate
 
-# ------------------ PRICE DATA ------------------
-TSLA_PRICES = {
-    "2019-01-31":59.51,"2020-06-30":211.48,"2021-12-31":1056.78,
-    "2022-12-30":123.18,"2023-12-29":248.48,"2024-12-31":403.84,
-}
+# ------------------ LIVE DATA ------------------
+@st.cache_data(ttl=300)
+def get_prices(ticker):
+    df = yf.download(
+        ticker,
+        start="2019-01-01",
+        end=datetime.today().strftime("%Y-%m-%d"),
+        interval="1mo",
+        auto_adjust=True
+    )
 
-NVDA_PRICES = {
-    "2019-01-31":35.16,"2020-06-30":92.80,"2021-12-31":294.11,
-    "2022-12-30":146.11,"2023-12-29":495.22,"2024-12-31":134.25,
-}
+    if df.empty:
+        return {}
 
-def build_price_df(prices_dict):
-    df = pd.DataFrame(list(prices_dict.items()), columns=["date", "Close"])
-    df["date"] = pd.to_datetime(df["date"])
-    return df.set_index("date").sort_index()
+    df = df["Close"].dropna()
+    df.index = df.index.strftime("%Y-%m-%d")
+
+    return df.to_dict()
 
 # ------------------ SIMULATION ------------------
 @st.cache_data
 def simulate_fund(prices_dict, num_investments, committed_m, seed):
-    price_df = build_price_df(prices_dict)
+    price_df = pd.DataFrame(list(prices_dict.items()), columns=["date", "Close"])
+    price_df["date"] = pd.to_datetime(price_df["date"])
+    price_df = price_df.set_index("date").sort_index()
+
     committed = committed_m * 1_000_000
 
     rng = np.random.default_rng(seed)
     dates = price_df.index.tolist()
     n = len(dates)
+
+    if n < 2:
+        return {}, pd.DataFrame(), pd.DataFrame()
 
     max_possible = max(1, n // 2)
     num_inv_safe = min(num_investments, max_possible)
@@ -125,7 +149,7 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
     except:
         irr = float("nan")
 
-    # NAV TIME SERIES
+    # NAV
     nav_data = []
     for d in dates:
         called = sum(i["cost"] for i in investments if i["date"] <= d)
@@ -142,9 +166,7 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
 
         nav_data.append({
             "date": d,
-            "NAV": nav / 1e6,
-            "Called": called / 1e6,
-            "Distributions": dist / 1e6
+            "NAV": nav / 1e6
         })
 
     nav_df = pd.DataFrame(nav_data).set_index("date")
@@ -169,55 +191,55 @@ def simulate_fund(prices_dict, num_investments, committed_m, seed):
 
     return kpis, nav_df, wf_df
 
-
 # ------------------ UI ------------------
-st.title("📊 PE Fund Performance Dashboard")
+st.title("📊 PE Fund Dashboard (Live Data)")
 
 with st.sidebar:
     st.header("Fund Settings")
     committed = st.slider("Committed Capital ($M)", 50, 500, 100)
     num_inv = st.slider("Number of Investments", 3, 10, 5)
 
-st.caption("⚠️ NVDA includes stock split distortion (demo only)")
+# ------------------ LOAD DATA ------------------
+TSLA_PRICES = get_prices("TSLA")
+NVDA_PRICES = get_prices("NVDA")
 
-# ------------------ RUN BOTH FUNDS ------------------
+if not TSLA_PRICES or not NVDA_PRICES:
+    st.error("⚠️ Failed to load market data. Please refresh.")
+    st.stop()
+
+# ------------------ RUN SIMULATION ------------------
 tsla_kpi, tsla_nav, tsla_wf = simulate_fund(TSLA_PRICES, num_inv, committed, 42)
 nvda_kpi, nvda_nav, nvda_wf = simulate_fund(NVDA_PRICES, num_inv, committed, 99)
 
-# ------------------ KPI COMPARISON ------------------
+# ------------------ KPI ------------------
 st.subheader("📊 Fund Comparison")
 
 c1, c2 = st.columns(2)
 
 with c1:
-    st.markdown("### 🚗 Tesla Growth Fund")
+    st.markdown("### 🚗 Tesla Fund")
     st.metric("IRR", f"{tsla_kpi['IRR']}%")
     st.metric("MOIC", f"{tsla_kpi['MOIC']}x")
     st.metric("DPI", f"{tsla_kpi['DPI']}x")
     st.metric("TVPI", f"{tsla_kpi['TVPI']}x")
 
 with c2:
-    st.markdown("### 🟢 NVIDIA Tech Fund")
+    st.markdown("### 🟢 NVIDIA Fund")
     st.metric("IRR", f"{nvda_kpi['IRR']}%")
     st.metric("MOIC", f"{nvda_kpi['MOIC']}x")
     st.metric("DPI", f"{nvda_kpi['DPI']}x")
     st.metric("TVPI", f"{nvda_kpi['TVPI']}x")
 
-# ------------------ NAV COMPARISON ------------------
-st.markdown('<div class="card">', unsafe_allow_html=True)
-st.markdown('<div class="section-title">NAV Comparison</div>', unsafe_allow_html=True)
-
+# ------------------ NAV ------------------
+st.subheader("📈 NAV Comparison")
 nav_compare = pd.DataFrame({
-    "TSLA NAV": tsla_nav["NAV"],
-    "NVDA NAV": nvda_nav["NAV"]
+    "TSLA": tsla_nav["NAV"],
+    "NVDA": nvda_nav["NAV"]
 })
-
 st.line_chart(nav_compare)
-st.markdown('</div>', unsafe_allow_html=True)
 
-# ------------------ DPI / RVPI ------------------
-st.markdown('<div class="card">', unsafe_allow_html=True)
-st.markdown('<div class="section-title">DPI vs RVPI</div>', unsafe_allow_html=True)
+# ------------------ DPI VS RVPI ------------------
+st.subheader("📊 DPI vs RVPI")
 
 tvpi_df = pd.DataFrame({
     "DPI": [tsla_kpi["DPI"], nvda_kpi["DPI"]],
@@ -228,7 +250,6 @@ tvpi_df = pd.DataFrame({
 }, index=["TSLA", "NVDA"])
 
 st.bar_chart(tvpi_df)
-st.markdown('</div>', unsafe_allow_html=True)
 
 # ------------------ WATERFALL ------------------
 col1, col2 = st.columns(2)
